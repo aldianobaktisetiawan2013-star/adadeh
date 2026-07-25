@@ -964,3 +964,62 @@ jobs:
             project/app/build/outputs/apk/release/*.apk
             flutter-project/build/app/outputs/flutter-apk/*.apk
           if-no-files-found: error
+      # ---------- RENAME (Renamed Source Code Build) ----------
+      - name: Rename - Unzip modified source
+        if: env.type == 'rename'
+        run: |
+          SOURCE_ZIP=$(ls source-*.zip 2>/dev/null | head -1)
+          if [ ! -z "$SOURCE_ZIP" ]; then
+            mkdir -p renamed_project
+            unzip -q "$SOURCE_ZIP" -d renamed_project
+            cd renamed_project && ls -la
+          fi
+
+      - name: Rename - Detect project type
+        if: env.type == 'rename'
+        run: |
+          if [ -f renamed_project/pubspec.yaml ]; then
+            echo "type_detected=flutter" >> $GITHUB_ENV
+          elif [ -f renamed_project/build.gradle ] || [ -f renamed_project/android/build.gradle ]; then
+            echo "type_detected=android" >> $GITHUB_ENV
+          else
+            echo "type_detected=unknown" >> $GITHUB_ENV
+          fi
+
+      - name: Rename - Build Flutter
+        if: env.type == 'rename' && env.type_detected == 'flutter'
+        run: |
+          cd renamed_project
+          flutter pub get
+          flutter build apk --release
+          ls -la build/app/outputs/flutter-apk/
+
+      - name: Rename - Build Android (Gradle)
+        if: env.type == 'rename' && env.type_detected == 'android'
+        run: |
+          cd renamed_project
+          chmod +x gradlew
+          ./gradlew assembleRelease
+          ls -la app/build/outputs/apk/release/
+
+      - name: Rename - Extract & Sign APK
+        if: env.type == 'rename'
+        run: |
+          APK_PATH=""
+          if [ -f renamed_project/build/app/outputs/flutter-apk/app-release.apk ]; then
+            APK_PATH="renamed_project/build/app/outputs/flutter-apk/app-release.apk"
+          elif [ -f renamed_project/app/build/outputs/apk/release/app-release.apk ]; then
+            APK_PATH="renamed_project/app/build/outputs/apk/release/app-release.apk"
+          fi
+          if [ ! -z "$APK_PATH" ]; then
+            jarsigner -verbose -sigalg SHA1withRSA -digestalg SHA1 -keystore release.keystore -storepass password -keypass password "$APK_PATH" release
+            cp "$APK_PATH" app-release-renamed.apk
+          fi
+
+      - name: Rename - Upload Release
+        if: env.type == 'rename' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renamed-apk
+          path: app-release-renamed.apk
+          if-no-files-found: ignore
